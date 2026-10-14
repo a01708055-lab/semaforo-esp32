@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Semáforo ESP32 — STATUS</title>
+<style>
+  :root {
+    --bg: #f4f4f5;
+    --housing: #c9c9ce;
+    --pill: #d9d9de;
+    --off-red: #5c1f1f;
+    --off-yellow: #5e5418;
+    --off-green: #174d22;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: var(--bg);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 24px;
+  }
+  h1 { font-size: 1.1rem; letter-spacing: 2px; color: #555; }
+  .board { display: flex; align-items: flex-start; gap: 28px; flex-wrap: wrap; justify-content: center; }
+  /* Pill STATUS como en Figma */
+  .status-pill {
+    background: var(--pill);
+    border-radius: 999px;
+    padding: 8px 18px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1rem;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #999; }
+  .dot.on { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+  .dot.off { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+  /* Carcasa fiel al Figma */
+  .housing {
+    background: var(--housing);
+    border-radius: 18px;
+    padding: 22px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .light {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    border: 5px solid #111;
+    background: #333;
+    transition: background .2s, box-shadow .2s;
+  }
+  /* Orden visual corregido: rojo arriba (convención). En tu Figma está invertido. */
+  #light-rojo.off { background: var(--off-red); }
+  #light-amarillo.off { background: var(--off-yellow); }
+  #light-verde.off { background: var(--off-green); }
+  #light-rojo.on { background: #ff1f1f; box-shadow: 0 0 24px #ff1f1f; }
+  #light-amarillo.on { background: #ffea00; box-shadow: 0 0 24px #ffea00; }
+  #light-verde.on { background: #00e800; box-shadow: 0 0 24px #00e800; }
+  .panel { text-align: center; }
+  .timer { font-size: 3.2rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .state-name { font-size: 1.3rem; font-weight: 700; text-transform: uppercase; }
+  .meta { color: #666; font-size: .85rem; margin-top: 6px; }
+  .bar { width: 220px; height: 8px; background: #ddd; border-radius: 99px; margin: 10px auto 0; overflow: hidden; }
+  .bar > div { height: 100%; width: 100%; background: #333; transition: width 1s linear; }
+</style>
+</head>
+<body>
+  <h1>SEMÁFORO · ESP32</h1>
+  <div class="board">
+    <div class="status-pill" title="Estado de conexión con el ESP32">
+      <span id="conn-dot" class="dot"></span>
+      STATUS: <span id="status-text">CONECTANDO…</span>
+    </div>
+    <div class="housing" role="img" aria-label="Semáforo">
+      <div id="light-rojo" class="light off"></div>
+      <div id="light-amarillo" class="light off"></div>
+      <div id="light-verde" class="light off"></div>
+    </div>
+    <div class="panel">
+      <div id="state-name" class="state-name">—</div>
+      <div id="timer" class="timer">--</div>
+      <div class="meta">segundos para el cambio de luz</div>
+      <div class="bar"><div id="bar-fill"></div></div>
+      <div id="meta" class="meta">puerto: —</div>
+    </div>
+  </div>
+
+<script>
+const els = {
+  rojo: document.getElementById('light-rojo'),
+  amarillo: document.getElementById('light-amarillo'),
+  verde: document.getElementById('light-verde'),
+  timer: document.getElementById('timer'),
+  name: document.getElementById('state-name'),
+  status: document.getElementById('status-text'),
+  dot: document.getElementById('conn-dot'),
+  meta: document.getElementById('meta'),
+  bar: document.getElementById('bar-fill'),
+};
+
+function render(s) {
+  // s = {estado, restante, duracion, pin, conectado, puerto}
+  const estado = (s.estado || '').toLowerCase();
+  for (const k of ['rojo', 'amarillo', 'verde']) {
+    els[k].classList.toggle('on', k === estado);
+    els[k].classList.toggle('off', k !== estado);
+  }
+  els.timer.textContent = (s.restante ?? '--') + (typeof s.restante === 'number' ? 's' : '');
+  els.name.textContent = estado ? estado.toUpperCase() + ` · PIN ${s.pin ?? '—'}` : '—';
+  els.name.style.color = estado === 'rojo' ? '#d00' : estado === 'amarillo' ? '#a80' : '#0a0';
+  const ok = !!s.conectado;
+  els.dot.className = 'dot ' + (ok ? 'on' : 'off');
+  els.status.textContent = ok ? 'EN LÍNEA' : 'SIN CONEXIÓN';
+  els.meta.textContent = `puerto: ${s.puerto || '—'} · ${s.fuente || ''}`;
+  if (typeof s.restante === 'number' && typeof s.duracion === 'number' && s.duracion > 0) {
+    els.bar.style.width = Math.max(0, Math.min(100, (s.restante / s.duracion) * 100)) + '%';
+  }
+  // Accesibilidad: anuncia el cambio
+  document.title = estado ? `(${s.restante}s) ${estado.toUpperCase()} — Semáforo` : 'Semáforo ESP32';
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/status');
+    render(await r.json());
+  } catch { /* SSE es la vía principal; poll solo como respaldo */ }
+}
+
+// Tiempo real vía SSE; con respaldo de polling cada 3 s por si el navegador corta el stream
+const es = new EventSource('/events');
+es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
+es.onerror = poll;
+setInterval(poll, 3000);
+poll();
+</script>
+</body>
+</html>
